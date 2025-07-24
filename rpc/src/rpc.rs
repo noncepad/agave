@@ -7,9 +7,10 @@ use {
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
+    //    agave_feature_set as feature_set,
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::{config::Options, serialize},
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{unbounded, Sender},
     jsonrpc_core::{
         futures::future::{self, FutureExt, OptionFuture},
         types::error,
@@ -418,31 +419,28 @@ impl JsonRpcRequestProcessor {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<Runtime>,
-    ) -> (Self, Receiver<TransactionInfo>) {
-        let (transaction_sender, transaction_receiver) = unbounded();
-        (
-            Self {
-                config,
-                snapshot_config,
-                bank_forks,
-                block_commitment_cache,
-                blockstore,
-                validator_exit,
-                health,
-                cluster_info,
-                genesis_hash,
-                transaction_sender,
-                bigtable_ledger_storage,
-                optimistically_confirmed_bank,
-                largest_accounts_cache,
-                max_slots,
-                leader_schedule_cache,
-                max_complete_transaction_status_slot,
-                prioritization_fee_cache,
-                runtime,
-            },
-            transaction_receiver,
-        )
+        transaction_sender: Sender<TransactionInfo>,
+    ) -> Self {
+        Self {
+            config,
+            snapshot_config,
+            bank_forks,
+            block_commitment_cache,
+            blockstore,
+            validator_exit,
+            health,
+            cluster_info,
+            genesis_hash,
+            transaction_sender,
+            bigtable_ledger_storage,
+            optimistically_confirmed_bank,
+            largest_accounts_cache,
+            max_slots,
+            leader_schedule_cache,
+            max_complete_transaction_status_slot,
+            prioritization_fee_cache,
+            runtime,
+        }
     }
 
     #[cfg(test)]
@@ -4766,6 +4764,7 @@ pub mod tests {
         }
 
         fn start_with_config(config: JsonRpcConfig) -> Self {
+            let (sender, _receiver) = unbounded();
             let (bank_forks, mint_keypair, leader_vote_keypair) =
                 new_bank_forks_with_config(BankTestConfig {
                     accounts_db_config: AccountsDbConfig {
@@ -4818,8 +4817,8 @@ pub mod tests {
                 max_complete_transaction_status_slot.clone(),
                 Arc::new(PrioritizationFeeCache::default()),
                 service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
-            )
-            .0;
+                sender,
+            );
 
             let mut io = MetaIoHandler::default();
             io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -6769,6 +6768,7 @@ pub mod tests {
 
         // Freeze bank 0 to prevent a panic in `run_transaction_simulation()`
         bank_forks.write().unwrap().get(0).unwrap().freeze();
+        let (sender, receiver) = crossbeam_channel::unbounded();
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_full::FullImpl.to_delegate());
@@ -6789,7 +6789,7 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let (meta, receiver) = JsonRpcRequestProcessor::new(
+        let meta = JsonRpcRequestProcessor::new(
             config,
             None,
             bank_forks.clone(),
@@ -6807,6 +6807,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
             runtime.clone(),
+            sender,
         );
 
         let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
@@ -7078,11 +7079,12 @@ pub mod tests {
             42,
             CommitmentSlots::new_from_slot(bank_forks.read().unwrap().highest_slot()),
         )));
-
+        let (sender, receiver) = unbounded();
         let cluster_info = Arc::new(new_test_cluster_info());
         let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+
         let config = JsonRpcConfig::default();
         let JsonRpcConfig {
             rpc_threads,
@@ -7092,7 +7094,7 @@ pub mod tests {
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
         let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
-        let (request_processor, receiver) = JsonRpcRequestProcessor::new(
+        let request_processor = JsonRpcRequestProcessor::new(
             config,
             None,
             bank_forks.clone(),
@@ -7110,8 +7112,8 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
             runtime,
+            sender,
         );
-
         SendTransactionService::new_with_client(
             &bank_forks,
             receiver,
@@ -8784,6 +8786,7 @@ pub mod tests {
             block_commitment_cache.clone(),
             optimistically_confirmed_bank.clone(),
         ));
+        let (sender, _receiver) = unbounded();
 
         let config = JsonRpcConfig::default();
         let JsonRpcConfig {
@@ -8792,7 +8795,7 @@ pub mod tests {
             rpc_niceness_adj,
             ..
         } = config;
-        let (meta, _receiver) = JsonRpcRequestProcessor::new(
+        let meta = JsonRpcRequestProcessor::new(
             config,
             None,
             bank_forks.clone(),
@@ -8810,6 +8813,7 @@ pub mod tests {
             max_complete_transaction_status_slot,
             Arc::new(PrioritizationFeeCache::default()),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
+            sender,
         );
 
         let mut io = MetaIoHandler::default();

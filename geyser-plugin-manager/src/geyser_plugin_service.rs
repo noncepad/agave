@@ -9,7 +9,7 @@ use {
         slot_status_observer::SlotStatusObserver,
         transaction_notifier::TransactionNotifierImpl,
     },
-    crossbeam_channel::Receiver,
+    crossbeam_channel::{Receiver, Sender},
     log::*,
     solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
     solana_ledger::entry_notifier_interface::EntryNotifierArc,
@@ -18,6 +18,7 @@ use {
         slot_status_notifier::SlotStatusNotifier,
         transaction_notifier_interface::TransactionNotifierArc,
     },
+    solana_send_transaction_service::send_transaction_service::TransactionInfo,
     std::{
         path::{Path, PathBuf},
         sync::{
@@ -60,12 +61,14 @@ impl GeyserPluginService {
         confirmed_bank_receiver: Receiver<SlotNotification>,
         geyser_plugin_always_enabled: bool,
         geyser_plugin_config_files: &[PathBuf],
+        sender: Sender<TransactionInfo>,
     ) -> Result<Self, GeyserPluginServiceError> {
         Self::new_with_receiver(
             confirmed_bank_receiver,
             geyser_plugin_always_enabled,
             geyser_plugin_config_files,
             None,
+            sender,
         )
     }
 
@@ -77,16 +80,23 @@ impl GeyserPluginService {
             Receiver<GeyserPluginManagerRequest>,
             Arc<AtomicBool>,
         )>,
+        sender: Sender<TransactionInfo>,
     ) -> Result<Self, GeyserPluginServiceError> {
         info!(
             "Starting GeyserPluginService from config files: {:?}",
             geyser_plugin_config_files
         );
         let mut plugin_manager = GeyserPluginManager::new();
+        info!("Starting GeyserPluginService from config files - 2",);
 
         for geyser_plugin_config_file in geyser_plugin_config_files {
-            Self::load_plugin(&mut plugin_manager, geyser_plugin_config_file)?;
+            Self::load_plugin(
+                &mut plugin_manager,
+                sender.clone(),
+                geyser_plugin_config_file,
+            )?;
         }
+        info!("Starting GeyserPluginService from config files - 3",);
 
         let account_data_notifications_enabled =
             plugin_manager.account_data_notifications_enabled() || geyser_plugin_always_enabled;
@@ -151,7 +161,7 @@ impl GeyserPluginService {
         // Initialize plugin manager rpc handler thread if needed
         if let Some((request_receiver, exit)) = rpc_to_plugin_manager_receiver_and_exit {
             let plugin_manager = plugin_manager.clone();
-            Self::start_manager_rpc_handler(plugin_manager, request_receiver, exit)
+            Self::start_manager_rpc_handler(plugin_manager, request_receiver, sender, exit)
         };
 
         info!("Started GeyserPluginService");
@@ -168,10 +178,11 @@ impl GeyserPluginService {
 
     fn load_plugin(
         plugin_manager: &mut GeyserPluginManager,
+        sender: Sender<TransactionInfo>,
         geyser_plugin_config_file: &Path,
     ) -> Result<(), GeyserPluginServiceError> {
         plugin_manager
-            .load_plugin(geyser_plugin_config_file)
+            .load_plugin(sender, geyser_plugin_config_file)
             .map_err(|e| GeyserPluginServiceError::FailedToLoadPlugin(e.into()))?;
         Ok(())
     }
@@ -207,6 +218,7 @@ impl GeyserPluginService {
     fn start_manager_rpc_handler(
         plugin_manager: Arc<RwLock<GeyserPluginManager>>,
         request_receiver: Receiver<GeyserPluginManagerRequest>,
+        sender: Sender<TransactionInfo>,
         exit: Arc<AtomicBool>,
     ) {
         thread::Builder::new()
@@ -226,10 +238,11 @@ impl GeyserPluginService {
                             ref config_file,
                             response_sender,
                         } => {
-                            let reload_result = plugin_manager
-                                .write()
-                                .unwrap()
-                                .reload_plugin(name, config_file);
+                            let reload_result = plugin_manager.write().unwrap().reload_plugin(
+                                sender.clone(),
+                                name,
+                                config_file,
+                            );
                             response_sender
                                 .send(reload_result)
                                 .expect("Admin rpc service will be waiting for response");
@@ -239,8 +252,10 @@ impl GeyserPluginService {
                             ref config_file,
                             response_sender,
                         } => {
-                            let load_result =
-                                plugin_manager.write().unwrap().load_plugin(config_file);
+                            let load_result = plugin_manager
+                                .write()
+                                .unwrap()
+                                .load_plugin(sender.clone(), config_file);
                             response_sender
                                 .send(load_result)
                                 .expect("Admin rpc service will be waiting for response");

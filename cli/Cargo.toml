@@ -17,6 +17,9 @@ name = "solana"
 path = "src/main.rs"
 
 [dependencies]
+
+
+solana-tps-client = { workspace = true }
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -31,7 +34,14 @@ humantime = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
 pretty-hex = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
+reqwest = { workspace = true, features = [
+  "blocking",
+  "brotli",
+  "deflate",
+  "gzip",
+  "rustls-tls",
+  "json",
+] }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
@@ -80,14 +90,13 @@ solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = "=2.2.1"
-solana-signature = { version = "=2.3.0", default-features = false }
 solana-signer = "=2.2.1"
 solana-slot-history = "=2.2.1"
-solana-stake-interface = "=1.2.1"
 solana-streamer = { workspace = true }
 solana-system-interface = { version = "=1.0", features = ["bincode"] }
+solana-signature = { version = "=2.3.0", default-features = false }
+solana-stake-interface = "=1.2.1"
 solana-sysvar = "=2.2.2"
-solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction = "=2.2.2"
 solana-transaction-error = "=2.2.1"

@@ -66,6 +66,17 @@ pull_request_rules:
         - or:
           - -files~=(\.rs|Cargo\.toml|Cargo\.lock|cargo-build-sbf|cargo-test-sbf|ci/downstream-projects/run-spl\.sh|\.github/workflows/downstream-project-spl\.yml)$
           - and:
+<<<<<<< HEAD
+            - status-success=cargo-test-sbf (token/program)
+            - status-success=cargo-test-sbf (instruction-padding/program, token/program-2022, token/program-2022-test)
+            - status-success=cargo-test-sbf (associated-token-account/program, associated-token-account/program-test)
+            - status-success=cargo-test-sbf (token-upgrade/program)
+            - status-success=cargo-test-sbf (feature-proposal/program)
+            - status-success=cargo-test-sbf (governance/addin-mock/program, governance/program)
+            - status-success=cargo-test-sbf (name-service/program)
+            - status-success=cargo-test-sbf (stake-pool/program)
+            - status-success=cargo-test-sbf (single-pool/program)
+=======
             - status-success=check (associated-token-account)
             - status-success=check (feature-proposal)
             - status-success=check (instruction-padding)
@@ -89,6 +100,7 @@ pull_request_rules:
         - or:
           - -files~=(Cargo\.toml|.github/workflows/crate-check\.yml|ci/check-crates\.sh)$
           - check-success=crate check
+>>>>>>> v2.2.0
     actions:
       merge:
         method: squash

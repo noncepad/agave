@@ -67,7 +67,7 @@ pub struct SendTransactionService {
     retry_thread: JoinHandle<()>,
     exit: Arc<AtomicBool>,
 }
-
+#[derive(Debug)]
 pub struct TransactionInfo {
     pub signature: Signature,
     pub wire_transaction: Vec<u8>,
@@ -189,7 +189,7 @@ impl SendTransactionService {
         tpu_address: SocketAddr,
         bank_forks: &Arc<RwLock<BankForks>>,
         leader_info: Option<T>,
-        receiver: Receiver<TransactionInfo>,
+        transaction_receiver: Receiver<TransactionInfo>,
         connection_cache: &Arc<ConnectionCache>,
         config: Config,
         exit: Arc<AtomicBool>,
@@ -202,7 +202,7 @@ impl SendTransactionService {
             config.leader_forward_count,
         );
 
-        Self::new_with_client(bank_forks, receiver, client, config, exit)
+        Self::new_with_client(bank_forks, transaction_receiver, client, config, exit)
     }
 
     pub fn new_with_client<Client: TransactionClient + Clone + std::marker::Send + 'static>(
@@ -268,18 +268,24 @@ impl SendTransactionService {
                 if exit.load(Ordering::Relaxed) {
                     break;
                 }
+                //warn!("received transaction - 0");
                 match recv_result {
                     Err(RecvTimeoutError::Disconnected) => {
-                        info!("Terminating send-transaction-service.");
+                        warn!("Terminating send-transaction-service.");
                         exit.store(true, Ordering::Relaxed);
                         break;
                     }
-                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Timeout) => {
+                        //    debug!("received transaction - timeout");
+                    }
                     Ok(transaction_info) => {
+                        warn!("received transaction - 1 - info {:?}", transaction_info);
                         stats.received_transactions.fetch_add(1, Ordering::Relaxed);
                         let entry = transactions.entry(transaction_info.signature);
+                        warn!("received transaction - 2");
                         let mut new_transaction = false;
                         if let Entry::Vacant(_) = entry {
+                            warn!("received transaction - 3");
                             if !retry_transactions
                                 .lock()
                                 .unwrap()
@@ -290,6 +296,7 @@ impl SendTransactionService {
                             }
                         }
                         if !new_transaction {
+                            warn!("received transaction - 4");
                             stats
                                 .received_duplicate_transactions
                                 .fetch_add(1, Ordering::Relaxed);

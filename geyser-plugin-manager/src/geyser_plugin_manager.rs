@@ -1,8 +1,10 @@
 use {
     agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
+    crossbeam_channel::Sender,
     jsonrpc_core::{ErrorCode, Result as JsonRpcResult},
     libloading::Library,
     log::*,
+    solana_send_transaction_service::send_transaction_service::TransactionInfo,
     std::{
         ops::{Deref, DerefMut},
         path::Path,
@@ -28,11 +30,16 @@ pub struct LoadedGeyserPlugin {
 
 impl LoadedGeyserPlugin {
     pub fn new(library: Library, plugin: Box<dyn GeyserPlugin>, name: Option<String>) -> Self {
-        Self {
+        info!("LoadedGeyserPlugin - loading plugin - 1_0");
+        let n2 = plugin.name();
+        info!("LoadedGeyserPlugin - loading plugin - 2 - n2 {}", n2);
+        let x = Self {
             name: name.unwrap_or_else(|| plugin.name().to_owned()),
             plugin,
             library,
-        }
+        };
+        info!("LoadedGeyserPlugin - loading plugin - 3 - name {} ", x.name);
+        x
     }
 
     pub fn name(&self) -> &str {
@@ -130,9 +137,14 @@ impl GeyserPluginManager {
     /// the plugin has been loaded and calling the name method.
     pub(crate) fn load_plugin(
         &mut self,
+        sender: Sender<TransactionInfo>,
         geyser_plugin_config_file: impl AsRef<Path>,
     ) -> JsonRpcResult<String> {
         // First load plugin
+        info!(
+            "load_plugin - 1__0 - path {}",
+            geyser_plugin_config_file.as_ref().to_str().unwrap()
+        );
         let (mut new_plugin, new_config_file) =
             load_plugin_from_config(geyser_plugin_config_file.as_ref()).map_err(|e| {
                 jsonrpc_core::Error {
@@ -141,6 +153,7 @@ impl GeyserPluginManager {
                     data: None,
                 }
             })?;
+        info!("load_plugin - 2");
 
         // Then see if a plugin with this name already exists. If so, abort
         if self
@@ -157,12 +170,14 @@ impl GeyserPluginManager {
                 data: None,
             });
         }
+        info!("load_plugin - 3");
 
         setup_logger_for_plugin(&*new_plugin.plugin)?;
 
+        info!("load_plugin - 4");
         // Call on_load and push plugin
         new_plugin
-            .on_load(new_config_file, false)
+            .on_load(sender, new_config_file, false)
             .map_err(|on_load_err| jsonrpc_core::Error {
                 code: ErrorCode::InvalidRequest,
                 message: format!(
@@ -171,9 +186,11 @@ impl GeyserPluginManager {
                 ),
                 data: None,
             })?;
+        info!("load_plugin - 5");
         let name = new_plugin.name().to_string();
         self.plugins.push(new_plugin);
 
+        info!("load_plugin - 6");
         Ok(name)
     }
 
@@ -201,7 +218,13 @@ impl GeyserPluginManager {
     /// Checks for a plugin with a given `name`.
     /// If it exists, first unload it.
     /// Then, attempt to load a new plugin
-    pub(crate) fn reload_plugin(&mut self, name: &str, config_file: &str) -> JsonRpcResult<()> {
+    pub(crate) fn reload_plugin(
+        &mut self,
+        sender: Sender<TransactionInfo>,
+        name: &str,
+        config_file: &str,
+    ) -> JsonRpcResult<()> {
+        info!("reload_plugin - 1__0 - path {}", config_file,);
         // Check if any plugin names match this one
         let Some(idx) = self
             .plugins
@@ -248,7 +271,7 @@ impl GeyserPluginManager {
         setup_logger_for_plugin(&*new_plugin.plugin)?;
 
         // Attempt to on_load with new plugin
-        match new_plugin.on_load(new_parsed_config_file, true) {
+        match new_plugin.on_load(sender, new_parsed_config_file, true) {
             // On success, push plugin and library
             Ok(()) => {
                 self.plugins.push(new_plugin);
@@ -349,10 +372,18 @@ pub enum GeyserPluginManagerError {
 pub(crate) fn load_plugin_from_config(
     geyser_plugin_config_file: &Path,
 ) -> Result<(LoadedGeyserPlugin, &str), GeyserPluginManagerError> {
+    info!(
+        "load_plugin_from_config - 0 - path {}",
+        geyser_plugin_config_file.display(),
+    );
     use std::{fs::File, io::Read, path::PathBuf};
     type PluginConstructor = unsafe fn() -> *mut dyn GeyserPlugin;
     use libloading::Symbol;
 
+    info!(
+        "load_plugin_from_config - 1 - path {}",
+        geyser_plugin_config_file.display(),
+    );
     let mut file = match File::open(geyser_plugin_config_file) {
         Ok(file) => file,
         Err(err) => {
@@ -361,6 +392,7 @@ pub(crate) fn load_plugin_from_config(
             )));
         }
     };
+    info!("load_plugin_from_config - 2",);
 
     let mut contents = String::new();
     if let Err(err) = file.read_to_string(&mut contents) {
@@ -368,6 +400,7 @@ pub(crate) fn load_plugin_from_config(
             "Failed to read the plugin config file {geyser_plugin_config_file:?}, error: {err:?}"
         )));
     }
+    info!("load_plugin_from_config - 3 - path {}", contents,);
 
     let result: serde_json::Value = match json5::from_str(&contents) {
         Ok(value) => value,
@@ -377,11 +410,13 @@ pub(crate) fn load_plugin_from_config(
             )));
         }
     };
+    info!("load_plugin_from_config - 4",);
 
     let libpath = result["libpath"]
         .as_str()
         .ok_or(GeyserPluginManagerError::LibPathNotSet)?;
     let mut libpath = PathBuf::from(libpath);
+    info!("load_plugin_from_config - 4a  - path {}", libpath.display());
     if libpath.is_relative() {
         let config_dir = geyser_plugin_config_file.parent().ok_or_else(|| {
             GeyserPluginManagerError::CannotOpenConfigFile(format!(
@@ -390,14 +425,17 @@ pub(crate) fn load_plugin_from_config(
         })?;
         libpath = config_dir.join(libpath);
     }
+    info!("load_plugin_from_config - 5",);
 
     let plugin_name = result["name"].as_str().map(|s| s.to_owned());
 
+    info!("load_plugin_from_config - 6",);
     let config_file = geyser_plugin_config_file
         .as_os_str()
         .to_str()
         .ok_or(GeyserPluginManagerError::InvalidPluginPath)?;
 
+    info!("load_plugin_from_config - 7",);
     let (plugin, lib) = unsafe {
         let lib = Library::new(libpath)
             .map_err(|e| GeyserPluginManagerError::PluginLoadError(e.to_string()))?;
@@ -407,10 +445,9 @@ pub(crate) fn load_plugin_from_config(
         let plugin_raw = constructor();
         (Box::from_raw(plugin_raw), lib)
     };
-    Ok((
-        LoadedGeyserPlugin::new(lib, plugin, plugin_name),
-        config_file,
-    ))
+    info!("load_plugin_from_config - 8",);
+    let x = LoadedGeyserPlugin::new(lib, plugin, plugin_name);
+    Ok((x, config_file))
 }
 
 #[cfg(test)]
@@ -451,6 +488,7 @@ mod tests {
             GeyserPluginManager, LoadedGeyserPlugin, TESTPLUGIN2_CONFIG, TESTPLUGIN_CONFIG,
         },
         agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
+        crossbeam_channel::unbounded,
         libloading::Library,
         std::sync::{Arc, RwLock},
     };
@@ -495,10 +533,11 @@ mod tests {
     fn test_geyser_reload() {
         // Initialize empty manager
         let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
-
+        let (sender, _receiver) = unbounded();
         // No plugins are loaded, this should fail
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
-        let reload_result = plugin_manager_lock.reload_plugin(DUMMY_NAME, DUMMY_CONFIG);
+        let reload_result =
+            plugin_manager_lock.reload_plugin(sender.clone(), DUMMY_NAME, DUMMY_CONFIG);
         assert_eq!(
             reload_result.unwrap_err().message,
             "The plugin you requested to reload is not loaded"
@@ -506,21 +545,23 @@ mod tests {
 
         // Mock having loaded plugin (TestPlugin)
         let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, DUMMY_CONFIG);
-        plugin.on_load(config, false).unwrap();
+        plugin.on_load(sender.clone(), config, false).unwrap();
         plugin_manager_lock.plugins.push(plugin);
         assert_eq!(plugin_manager_lock.plugins[0].name(), DUMMY_NAME);
         plugin_manager_lock.plugins[0].name();
 
         // Try wrong name (same error)
         const WRONG_NAME: &str = "wrong_name";
-        let reload_result = plugin_manager_lock.reload_plugin(WRONG_NAME, DUMMY_CONFIG);
+        let reload_result =
+            plugin_manager_lock.reload_plugin(sender.clone(), WRONG_NAME, DUMMY_CONFIG);
         assert_eq!(
             reload_result.unwrap_err().message,
             "The plugin you requested to reload is not loaded"
         );
 
         // Now try a (dummy) reload, replacing TestPlugin with TestPlugin2
-        let reload_result = plugin_manager_lock.reload_plugin(DUMMY_NAME, TESTPLUGIN2_CONFIG);
+        let reload_result =
+            plugin_manager_lock.reload_plugin(sender.clone(), DUMMY_NAME, TESTPLUGIN2_CONFIG);
         assert!(reload_result.is_ok());
 
         // The plugin is now replaced with ANOTHER_DUMMY_NAME
@@ -535,15 +576,15 @@ mod tests {
         // Initialize empty manager
         let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
-
+        let (sender, _receiver) = unbounded();
         // Load two plugins
         // First
         let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, TESTPLUGIN_CONFIG);
-        plugin.on_load(config, false).unwrap();
+        plugin.on_load(sender.clone(), config, false).unwrap();
         plugin_manager_lock.plugins.push(plugin);
         // Second
         let (mut plugin, config) = dummy_plugin_and_library(TestPlugin2, TESTPLUGIN2_CONFIG);
-        plugin.on_load(config, false).unwrap();
+        plugin.on_load(sender.clone(), config, false).unwrap();
         plugin_manager_lock.plugins.push(plugin);
 
         // Check that both plugins are returned in the list
@@ -557,9 +598,9 @@ mod tests {
         // Initialize empty manager
         let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
-
+        let (sender, _receiver) = unbounded();
         // Load rpc call
-        let load_result = plugin_manager_lock.load_plugin(TESTPLUGIN_CONFIG);
+        let load_result = plugin_manager_lock.load_plugin(sender.clone(), TESTPLUGIN_CONFIG);
         assert!(load_result.is_ok());
         assert_eq!(plugin_manager_lock.plugins.len(), 1);
 

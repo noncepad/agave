@@ -9,7 +9,7 @@ use {
         rpc_cache::LargestAccountsCache,
         rpc_health::*,
     },
-    crossbeam_channel::unbounded,
+    crossbeam_channel::{unbounded, Receiver, Sender},
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
         hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
@@ -40,7 +40,7 @@ use {
         snapshot_utils,
     },
     solana_send_transaction_service::{
-        send_transaction_service::{self, SendTransactionService},
+        send_transaction_service::{self, SendTransactionService, TransactionInfo},
         transaction_client::{ConnectionCacheClient, TpuClientNextClient, TransactionClient},
     },
     solana_storage_bigtable::CredentialType,
@@ -500,7 +500,11 @@ pub enum ClientOption<'a> {
 }
 
 impl JsonRpcService {
-    pub fn new_with_config(config: JsonRpcServiceConfig) -> Result<Self, String> {
+    pub fn new_with_config(
+        config: JsonRpcServiceConfig,
+        sender: Sender<TransactionInfo>,
+        receiver: Receiver<TransactionInfo>,
+    ) -> Result<Self, String> {
         let runtime = service_runtime(
             config.rpc_config.rpc_threads,
             config.rpc_config.rpc_blocking_threads,
@@ -549,6 +553,8 @@ impl JsonRpcService {
                     config.max_complete_transaction_status_slot,
                     config.prioritization_fee_cache,
                     runtime,
+                    sender,
+                    receiver,
                 )?;
                 Ok(json_rpc_service)
             }
@@ -599,6 +605,8 @@ impl JsonRpcService {
                     config.max_complete_transaction_status_slot,
                     config.prioritization_fee_cache,
                     runtime,
+                    sender,
+                    receiver,
                 )?;
                 Ok(json_rpc_service)
             }
@@ -628,6 +636,8 @@ impl JsonRpcService {
         connection_cache: Arc<ConnectionCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        transaction_sender: Sender<TransactionInfo>,
+        transaction_receiver: Receiver<TransactionInfo>,
     ) -> Result<Self, String> {
         let runtime = service_runtime(
             config.rpc_threads,
@@ -676,6 +686,8 @@ impl JsonRpcService {
             max_complete_transaction_status_slot,
             prioritization_fee_cache,
             runtime,
+            transaction_sender,
+            transaction_receiver,
         )?;
         Ok(json_rpc_service)
     }
@@ -710,6 +722,8 @@ impl JsonRpcService {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<TokioRuntime>,
+        sender: Sender<TransactionInfo>,
+        receiver: Receiver<TransactionInfo>,
     ) -> Result<Self, String> {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
@@ -779,12 +793,12 @@ impl JsonRpcService {
             } else {
                 (None, None)
             };
-
+        //        let (sender, receiver) = unbounded();
         let full_api = config.full_api;
         let max_request_body_size = config
             .max_request_body_size
             .unwrap_or(MAX_REQUEST_BODY_SIZE);
-        let (request_processor, receiver) = JsonRpcRequestProcessor::new(
+        let request_processor = JsonRpcRequestProcessor::new(
             config,
             snapshot_config.clone(),
             bank_forks.clone(),
@@ -801,7 +815,8 @@ impl JsonRpcService {
             leader_schedule_cache,
             max_complete_transaction_status_slot,
             prioritization_fee_cache,
-            Arc::clone(&runtime),
+            runtime.clone(),
+            sender,
         );
 
         let _send_transaction_service = Arc::new(SendTransactionService::new_with_client(
@@ -990,6 +1005,7 @@ mod tests {
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
+        let (sender, receiver) = unbounded();
         let mut rpc_service = JsonRpcService::new(
             rpc_addr,
             JsonRpcConfig::default(),
@@ -1016,6 +1032,8 @@ mod tests {
             connection_cache,
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
+            sender,
+            receiver,
         )
         .expect("assume successful JsonRpcService start");
         let thread = rpc_service.thread_hdl.thread();

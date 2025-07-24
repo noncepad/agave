@@ -3,7 +3,9 @@
 /// In addition, the dynamic library must export a "C" function _create_plugin which
 /// creates the implementation of the plugin.
 use {
+    crossbeam_channel::Sender,
     solana_clock::{Slot, UnixTimestamp},
+    solana_send_transaction_service::send_transaction_service::TransactionInfo,
     solana_signature::Signature,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
@@ -388,7 +390,12 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// of the config file. The config must be in JSON format and
     /// include a field "libpath" indicating the full path
     /// name of the shared library implementing this interface.
-    fn on_load(&mut self, _config_file: &str, _is_reload: bool) -> Result<()> {
+    fn on_load(
+        &mut self,
+        _sender: Sender<TransactionInfo>,
+        _config_file: &str,
+        _is_reload: bool,
+    ) -> Result<()> {
         Ok(())
     }
 

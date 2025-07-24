@@ -149,8 +149,10 @@ dependencies = [
 name = "agave-geyser-plugin-interface"
 version = "2.3.2"
 dependencies = [
+ "crossbeam-channel",
  "log",
  "solana-clock",
+ "solana-send-transaction-service",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-status",
@@ -8453,6 +8455,7 @@ dependencies = [
  "solana-pubkey",
  "solana-rpc",
  "solana-runtime",
+ "solana-send-transaction-service",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-status",

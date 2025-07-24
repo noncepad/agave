@@ -636,6 +636,7 @@ impl Validator {
                     .geyser_plugin_always_enabled
                     .then_some(Cow::Owned(vec![]))
             });
+        let (transaction_sender, transaction_receiver) = crossbeam_channel::unbounded();
         let geyser_plugin_service =
             if let Some(geyser_plugin_config_files) = geyser_plugin_config_files {
                 let (confirmed_bank_sender, confirmed_bank_receiver) = unbounded();
@@ -648,6 +649,7 @@ impl Validator {
                         config.geyser_plugin_always_enabled,
                         geyser_plugin_config_files.as_ref(),
                         rpc_to_plugin_manager_receiver_and_exit,
+                        transaction_sender.clone(),
                     )
                     .map_err(|err| {
                         ValidatorError::Other(format!("Failed to load the Geyser plugin: {err:?}"))
@@ -1207,8 +1209,12 @@ impl Validator {
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 client_option,
             };
-            let json_rpc_service =
-                JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
+            let json_rpc_service = JsonRpcService::new_with_config(
+                rpc_svc_config,
+                transaction_sender,
+                transaction_receiver,
+            )
+            .map_err(ValidatorError::Other)?;
 
             let pubsub_service = if !config.rpc_config.full_api {
                 None

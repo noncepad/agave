@@ -18,4 +18,6 @@ solana-clock = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
+crossbeam-channel = { workspace = true }
 thiserror = { workspace = true }
+solana-send-transaction-service = { workspace = true }
